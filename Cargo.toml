@@ -1,0 +1,15 @@
+[package]
+name = "handsfreectl"
+version = "0.1.0"
+edition = "2024"
+description = "Command line control interface for the Handsfree speech-to-text daemon"
+authors = ["Achyudh Ram <mail@achyudh.me>"]
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.10"
