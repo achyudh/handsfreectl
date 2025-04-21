@@ -1,18 +1,45 @@
 use crate::protocol::DaemonCommand;
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 
-/// Get the path to the daemon's Unix domain socket
+/// Get the path to the daemon's Unix domain socket, matching daemon defaults
+/// with a simplified /tmp fallback.
 pub fn get_socket_path() -> Result<PathBuf, String> {
-    match env::var("XDG_RUNTIME_DIR") {
-        Ok(runtime_dir) => {
-            let socket_path = PathBuf::from(runtime_dir).join("handsfree.sock");
-            Ok(socket_path)
+    if let Ok(runtime_dir_str) = env::var("XDG_RUNTIME_DIR") {
+        let runtime_dir = PathBuf::from(runtime_dir_str);
+        // Use the daemon's preferred subdirectory and filename
+        let socket_dir = runtime_dir.join("handsfree");
+        let socket_path = socket_dir.join("daemon.sock");
+
+        // Attempt to create the directory
+        match fs::create_dir_all(&socket_dir) {
+            Ok(_) => {
+                // Creation succeeded
+                println!("Using socket path: {:?}", socket_path);
+                return Ok(socket_path);
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: Could not create directory in XDG_RUNTIME_DIR ({}): {}. \
+                     Falling back to /tmp/handsfree.sock.",
+                    socket_dir.display(),
+                    e
+                );
+                // Fall through to /tmp fallback
+            }
         }
-        Err(e) => Err(format!("$XDG_RUNTIME_DIR not set or invalid: {}", e)),
+    } else {
+        eprintln!("Warning: XDG_RUNTIME_DIR not set. Falling back to /tmp/handsfree.sock.");
+        // Fall through to /tmp fallback
     }
+
+    // Fallback logic: Use a generic path in /tmp
+    let socket_path = PathBuf::from("/tmp/handsfree.sock");
+    println!("Using fallback socket path: {:?}", socket_path);
+    Ok(socket_path)
 }
 
 /// Connect to the daemon's Unix domain socket
@@ -66,6 +93,40 @@ mod tests {
     use tokio::io::AsyncReadExt;
     use tokio::net::UnixListener;
 
+    // Helper struct for tests to manage environment variables temporarily
+    struct EnvVarGuard {
+        key: String,
+        original_value: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn new(key: &str) -> Self {
+            let key = key.to_string();
+            let original_value = env::var(&key).ok();
+            // SAFETY: We're in a test and managing the env var lifecycle
+            unsafe {
+                env::remove_var(&key);
+            } // Ensure it's removed for the test
+            EnvVarGuard {
+                key,
+                original_value,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: We're in a test and managing the env var lifecycle
+            unsafe {
+                // Restore original value when guard goes out of scope
+                match &self.original_value {
+                    Some(val) => env::set_var(&self.key, val),
+                    None => env::remove_var(&self.key),
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_get_socket_path_success() {
         // Mock XDG_RUNTIME_DIR for this test
@@ -82,11 +143,16 @@ mod tests {
             env::set_var("XDG_RUNTIME_DIR", temp_path_str);
         }
 
-        let expected_path = temp_dir.path().join("handsfree.sock");
+        let expected_path = temp_path.join("handsfree").join("daemon.sock");
         match get_socket_path() {
             Ok(path) => assert_eq!(path, expected_path),
             Err(e) => panic!("get_socket_path failed unexpectedly: {}", e),
         }
+
+        // Verify the directory was created
+        let handsfree_dir = temp_path.join("handsfree");
+        assert!(handsfree_dir.exists());
+        assert!(handsfree_dir.is_dir());
 
         // SAFETY: We're in a test and managing the env var lifecycle
         unsafe {
@@ -96,15 +162,40 @@ mod tests {
 
     #[test]
     fn test_get_socket_path_no_xdg_runtime_dir() {
+        // Temporarily remove the var for this test's scope if set externally
+        let _env_guard = EnvVarGuard::new("XDG_RUNTIME_DIR");
+
+        match get_socket_path() {
+            Ok(path) => assert_eq!(path, PathBuf::from("/tmp/handsfree.sock")),
+            Err(e) => panic!("get_socket_path failed unexpectedly: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_socket_path_xdg_create_fails() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let temp_path = temp_dir.path();
+
+        // Create a file where the directory should be to force creation failure
+        let handsfree_path = temp_path.join("handsfree");
+        fs::write(&handsfree_path, "block directory creation")
+            .expect("Failed to create blocking file");
+
+        let temp_path_str = temp_path.to_str().expect("Failed to get path string");
         // SAFETY: We're in a test and managing the env var lifecycle
         unsafe {
-            // Ensure XDG_RUNTIME_DIR is not set
-            env::remove_var("XDG_RUNTIME_DIR");
+            env::set_var("XDG_RUNTIME_DIR", temp_path_str);
         }
-        // Try to get socket path - should fail when XDG_RUNTIME_DIR is not set
+
+        // Should fall back to /tmp
         match get_socket_path() {
-            Ok(_) => panic!("get_socket_path unexpectedly succeeded without XDG_RUNTIME_DIR"),
-            Err(e) => assert!(e.contains("XDG_RUNTIME_DIR")), // Error message should mention XDG_RUNTIME_DIR
+            Ok(path) => assert_eq!(path, PathBuf::from("/tmp/handsfree.sock")),
+            Err(e) => panic!("get_socket_path failed unexpectedly: {}", e),
+        }
+
+        // SAFETY: We're in a test and managing the env var lifecycle
+        unsafe {
+            env::remove_var("XDG_RUNTIME_DIR");
         }
     }
 
