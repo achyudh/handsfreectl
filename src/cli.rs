@@ -25,6 +25,10 @@ pub enum Commands {
     },
     /// Stops the transcription
     Stop,
+    /// Gets the current status of the daemon
+    Status,
+    /// Tells the daemon to shut down gracefully
+    Shutdown,
 }
 
 impl Cli {
@@ -69,6 +73,18 @@ mod tests {
     fn test_parse_stop() {
         let args = Cli::parse_from(&["handsfreectl", "stop"]);
         assert_eq!(args.command, Commands::Stop);
+    }
+
+    #[test]
+    fn test_parse_status() {
+        let args = Cli::parse_from(&["handsfreectl", "status"]);
+        assert_eq!(args.command, Commands::Status);
+    }
+
+    #[test]
+    fn test_parse_shutdown() {
+        let args = Cli::parse_from(&["handsfreectl", "shutdown"]);
+        assert_eq!(args.command, Commands::Shutdown);
     }
 
     #[test]
