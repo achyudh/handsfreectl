@@ -1,10 +1,13 @@
-use crate::protocol::DaemonCommand;
+use crate::protocol::{DaemonCommand, DaemonResponse};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+use tokio::time::timeout;
 use users::get_current_uid;
+
+const READ_TIMEOUT_SECS: u64 = 5; // Timeout for waiting for response
 
 /// Get the path to the daemon's Unix domain socket, matching daemon defaults.
 pub fn get_socket_path() -> Result<PathBuf, String> {
@@ -55,8 +58,59 @@ pub async fn connect_to_daemon(socket_path: &Path) -> Result<UnixStream, String>
     }
 }
 
-/// Send a command to the daemon
-pub async fn send_command(stream: &mut UnixStream, command: &DaemonCommand) -> Result<(), String> {
+/// Reads and deserializes a JSON response line from the daemon stream.
+pub async fn receive_response(stream: &mut UnixStream) -> Result<DaemonResponse, String> {
+    let mut reader = BufReader::new(stream);
+    let mut response_json = String::new();
+
+    // Add a timeout for reading the response
+    match timeout(
+        std::time::Duration::from_secs(READ_TIMEOUT_SECS),
+        reader.read_line(&mut response_json),
+    )
+    .await
+    {
+        Ok(Ok(0)) | Err(_) => {
+            // Ok(Ok(0)) -> EOF, Err(_) -> TimeoutError
+            if response_json.is_empty() {
+                Err(format!(
+                    "Connection closed by daemon or timeout after {} seconds while waiting for response.",
+                    READ_TIMEOUT_SECS
+                ))
+            } else {
+                // Timeout occurred but maybe we read something? Less likely with read_line
+                Err(format!(
+                    "Timeout after {} seconds reading response line.",
+                    READ_TIMEOUT_SECS
+                ))
+            }
+        }
+        Ok(Ok(_)) => {
+            // Successfully read a line
+            let trimmed_response = response_json.trim_end_matches('\n');
+            if trimmed_response.is_empty() {
+                Err("Received empty response line from daemon.".to_string())
+            } else {
+                serde_json::from_str::<DaemonResponse>(trimmed_response).map_err(|e| {
+                    format!(
+                        "Failed to deserialize daemon response '{}': {}",
+                        trimmed_response, e
+                    )
+                })
+            }
+        }
+        Ok(Err(e)) => {
+            // IO error from read_line
+            Err(format!("Failed to read response from daemon: {}", e))
+        }
+    }
+}
+
+/// Send a command to the daemon and read its response
+pub async fn send_command(
+    stream: &mut UnixStream,
+    command: &DaemonCommand,
+) -> Result<DaemonResponse, String> {
     let command_json = serde_json::to_string(command)
         .map_err(|e| format!("Failed to serialize command: {}", e))?;
     let command_json_with_newline = format!("{}\n", command_json);
@@ -72,19 +126,14 @@ pub async fn send_command(stream: &mut UnixStream, command: &DaemonCommand) -> R
         .await
         .map_err(|e| format!("Failed to flush socket: {}", e))?;
 
-    stream
-        .shutdown()
-        .await
-        .map_err(|e| format!("Failed to shutdown socket write half: {}", e))?;
-
-    Ok(())
+    // Don't shutdown, we need to read the response
+    receive_response(stream).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cli::CliOutputMode;
-    use crate::protocol::DaemonCommand;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
@@ -205,8 +254,9 @@ mod tests {
         }
     }
 
+    // Test successful command sending and response parsing
     #[tokio::test]
-    async fn test_send_command() {
+    async fn test_send_command_with_response() {
         // Create a temporary socket path
         let dir = tempfile::tempdir().unwrap();
         let socket_path = dir.path().join("test.sock");
@@ -219,7 +269,16 @@ mod tests {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buf = [0u8; 1024];
             let n = socket.read(&mut buf).await.unwrap();
-            String::from_utf8_lossy(&buf[..n]).to_string()
+            let received = String::from_utf8_lossy(&buf[..n]);
+
+            // Send back an Ack response
+            let response = r#"{"response_type":"ack"}"#;
+            socket
+                .write_all(format!("{}\n", response).as_bytes())
+                .await
+                .unwrap();
+            socket.flush().await.unwrap();
+            received.to_string()
         });
 
         // Connect and send a command
@@ -227,12 +286,93 @@ mod tests {
         let command = DaemonCommand::Start {
             output_mode: CliOutputMode::Clipboard,
         };
-        send_command(&mut stream, &command).await.unwrap();
 
-        // Get the received data and verify it
+        // Send command and get response
+        let response = send_command(&mut stream, &command).await.unwrap();
+
+        // Verify sent command
         let received = handle.await.unwrap();
         let expected = format!("{}\n", serde_json::to_string(&command).unwrap());
         assert_eq!(received, expected);
+
+        // Verify received response
+        assert!(matches!(response, DaemonResponse::Ack));
+    }
+
+    // Test response timeout
+    #[tokio::test]
+    async fn test_receive_response_timeout() {
+        // Create a temporary socket path
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("test.sock");
+
+        // Create a listener that accepts but never responds
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            // Don't send any response, just wait
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        });
+
+        // Connect and try to receive
+        let mut stream = UnixStream::connect(&socket_path).await.unwrap();
+        let result = receive_response(&mut stream).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("timeout"));
+    }
+
+    // Test invalid response JSON
+    #[tokio::test]
+    async fn test_receive_invalid_response() {
+        // Create a temporary socket path
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("test.sock");
+
+        // Create a listener that sends invalid JSON
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.write_all(b"{invalid_json}\n").await.unwrap();
+            socket.flush().await.unwrap();
+        });
+
+        // Connect and try to receive
+        let mut stream = UnixStream::connect(&socket_path).await.unwrap();
+        let result = receive_response(&mut stream).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to deserialize"));
+    }
+
+    #[tokio::test]
+    async fn test_daemon_error_response() {
+        // Create a temporary socket path
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("test.sock");
+
+        // Create a listener that sends an error response
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let error_response = r#"{"response_type":"error","message":"Invalid command"}"#;
+            socket
+                .write_all(format!("{}\n", error_response).as_bytes())
+                .await
+                .unwrap();
+            socket.flush().await.unwrap();
+        });
+
+        // Connect and try to receive
+        let mut stream = UnixStream::connect(&socket_path).await.unwrap();
+        let response = receive_response(&mut stream).await.unwrap();
+
+        match response {
+            DaemonResponse::Error { message } => {
+                assert_eq!(message, "Invalid command");
+            }
+            other => panic!("Expected Error response, got {:?}", other),
+        }
     }
 
     #[tokio::test]
