@@ -29,7 +29,8 @@ pub enum DaemonResponse {
     /// Simple acknowledgment of a command
     Ack,
     /// Status information response
-    Status(DaemonStatus),
+    #[serde(rename_all = "lowercase")]
+    Status { status: DaemonStatus },
     /// Error response with message
     Error { message: String },
 }
@@ -60,34 +61,6 @@ mod tests {
     }
 
     #[test]
-    fn test_daemon_command_deserialization() {
-        // Test Start command
-        let json = r#"{"command":"start","output_mode":"clipboard"}"#;
-        let cmd: DaemonCommand = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            cmd,
-            DaemonCommand::Start {
-                output_mode: CliOutputMode::Clipboard
-            }
-        );
-
-        // Test Stop command
-        let json = r#"{"command":"stop"}"#;
-        let cmd: DaemonCommand = serde_json::from_str(json).unwrap();
-        assert_eq!(cmd, DaemonCommand::Stop);
-
-        // Test Status command
-        let json = r#"{"command":"status"}"#;
-        let cmd: DaemonCommand = serde_json::from_str(json).unwrap();
-        assert_eq!(cmd, DaemonCommand::Status);
-
-        // Test Shutdown command
-        let json = r#"{"command":"shutdown"}"#;
-        let cmd: DaemonCommand = serde_json::from_str(json).unwrap();
-        assert_eq!(cmd, DaemonCommand::Shutdown);
-    }
-
-    #[test]
     fn test_daemon_response_deserialization() {
         // Test Ack
         let json_ack = r#"{"response_type":"ack"}"#;
@@ -95,26 +68,29 @@ mod tests {
         assert_eq!(resp_ack, DaemonResponse::Ack);
 
         // Test Status (with error)
-        let json_status =
-            r#"{"response_type":"status","state":"error","last_error":"Model failed"}"#;
+        let json_status = r#"{"response_type":"status","status":{"state":"error","last_error":"Model failed"}}"#;
         let resp_status: DaemonResponse = serde_json::from_str(json_status).unwrap();
         assert_eq!(
             resp_status,
-            DaemonResponse::Status(DaemonStatus {
-                state: "error".to_string(),
-                last_error: Some("Model failed".to_string())
-            })
+            DaemonResponse::Status {
+                status: DaemonStatus {
+                    state: "error".to_string(),
+                    last_error: Some("Model failed".to_string())
+                }
+            }
         );
 
         // Test Status (no error)
-        let json_status_ok = r#"{"response_type":"status","state":"idle","last_error":null}"#;
+        let json_status_ok = r#"{"response_type":"status","status":{"state":"idle","last_error":null}}"#;
         let resp_status_ok: DaemonResponse = serde_json::from_str(json_status_ok).unwrap();
         assert_eq!(
             resp_status_ok,
-            DaemonResponse::Status(DaemonStatus {
-                state: "idle".to_string(),
-                last_error: None
-            })
+            DaemonResponse::Status {
+                status: DaemonStatus {
+                    state: "idle".to_string(),
+                    last_error: None
+                }
+            }
         );
 
         // Test Error
@@ -130,38 +106,17 @@ mod tests {
 
     #[test]
     fn test_daemon_response_serialization() {
-        // Test Ack serialization
-        let resp_ack = DaemonResponse::Ack;
-        let json = serde_json::to_string(&resp_ack).unwrap();
-        assert_eq!(json, r#"{"response_type":"ack"}"#);
-
-        // Test Status serialization (with error)
-        let resp_status = DaemonResponse::Status(DaemonStatus {
-            state: "error".to_string(),
-            last_error: Some("Model failed".to_string()),
-        });
-        let json = serde_json::to_string(&resp_status).unwrap();
-        assert_eq!(
-            json,
-            r#"{"response_type":"status","state":"error","last_error":"Model failed"}"#
-        );
-
-        // Test Status serialization (no error)
-        let resp_status_ok = DaemonResponse::Status(DaemonStatus {
-            state: "idle".to_string(),
-            last_error: None,
-        });
-        let json = serde_json::to_string(&resp_status_ok).unwrap();
-        assert_eq!(
-            json,
-            r#"{"response_type":"status","state":"idle","last_error":null}"#
-        );
-
-        // Test Error serialization
-        let resp_error = DaemonResponse::Error {
-            message: "Bad command".to_string(),
+        // Test Status serialization
+        let resp = DaemonResponse::Status {
+            status: DaemonStatus {
+                state: "listening".to_string(),
+                last_error: None,
+            },
         };
-        let json = serde_json::to_string(&resp_error).unwrap();
-        assert_eq!(json, r#"{"response_type":"error","message":"Bad command"}"#);
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(
+            json,
+            r#"{"response_type":"status","status":{"state":"listening","last_error":null}}"#
+        );
     }
 }

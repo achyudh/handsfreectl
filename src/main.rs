@@ -39,10 +39,10 @@ async fn main() {
             DaemonResponse::Ack => {
                 println!("OK"); // Simple acknowledgement for successful commands
             }
-            DaemonResponse::Status(status_info) => {
+            DaemonResponse::Status { status } => {
                 // Print state directly, error on next line if present
-                println!("{}", status_info.state);
-                if let Some(err) = status_info.last_error {
+                println!("{}", status.state);
+                if let Some(err) = status.last_error {
                     println!("{}", err);
                 }
             }
