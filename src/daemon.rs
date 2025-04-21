@@ -4,27 +4,25 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
+use users::get_current_uid;
 
-/// Get the path to the daemon's Unix domain socket, matching daemon defaults
-/// with a simplified /tmp fallback.
+/// Get the path to the daemon's Unix domain socket, matching daemon defaults.
 pub fn get_socket_path() -> Result<PathBuf, String> {
     if let Ok(runtime_dir_str) = env::var("XDG_RUNTIME_DIR") {
         let runtime_dir = PathBuf::from(runtime_dir_str);
-        // Use the daemon's preferred subdirectory and filename
         let socket_dir = runtime_dir.join("handsfree");
-        let socket_path = socket_dir.join("daemon.sock");
 
         // Attempt to create the directory
         match fs::create_dir_all(&socket_dir) {
             Ok(_) => {
-                // Creation succeeded
+                let socket_path = socket_dir.join("daemon.sock");
                 println!("Using socket path: {:?}", socket_path);
                 return Ok(socket_path);
             }
             Err(e) => {
                 eprintln!(
                     "Warning: Could not create directory in XDG_RUNTIME_DIR ({}): {}. \
-                     Falling back to /tmp/handsfree.sock.",
+                     Falling back to /tmp.",
                     socket_dir.display(),
                     e
                 );
@@ -32,12 +30,13 @@ pub fn get_socket_path() -> Result<PathBuf, String> {
             }
         }
     } else {
-        eprintln!("Warning: XDG_RUNTIME_DIR not set. Falling back to /tmp/handsfree.sock.");
+        eprintln!("Warning: XDG_RUNTIME_DIR not set. Falling back to /tmp.");
         // Fall through to /tmp fallback
     }
 
-    // Fallback logic: Use a generic path in /tmp
-    let socket_path = PathBuf::from("/tmp/handsfree.sock");
+    // Fallback logic: use uid-specific socket in /tmp
+    let uid = get_current_uid();
+    let socket_path = PathBuf::from(format!("/tmp/handsfree-{}.sock", uid));
     println!("Using fallback socket path: {:?}", socket_path);
     Ok(socket_path)
 }
@@ -165,8 +164,12 @@ mod tests {
         // Temporarily remove the var for this test's scope if set externally
         let _env_guard = EnvVarGuard::new("XDG_RUNTIME_DIR");
 
+        // Get the expected UID for comparison
+        let uid = get_current_uid();
+        let expected_path = PathBuf::from(format!("/tmp/handsfree-{}.sock", uid));
+
         match get_socket_path() {
-            Ok(path) => assert_eq!(path, PathBuf::from("/tmp/handsfree.sock")),
+            Ok(path) => assert_eq!(path, expected_path),
             Err(e) => panic!("get_socket_path failed unexpectedly: {}", e),
         }
     }
@@ -187,9 +190,12 @@ mod tests {
             env::set_var("XDG_RUNTIME_DIR", temp_path_str);
         }
 
-        // Should fall back to /tmp
+        // Should fall back to /tmp/handsfree-uid.sock
+        let uid = get_current_uid();
+        let expected_path = PathBuf::from(format!("/tmp/handsfree-{}.sock", uid));
+
         match get_socket_path() {
-            Ok(path) => assert_eq!(path, PathBuf::from("/tmp/handsfree.sock")),
+            Ok(path) => assert_eq!(path, expected_path),
             Err(e) => panic!("get_socket_path failed unexpectedly: {}", e),
         }
 
