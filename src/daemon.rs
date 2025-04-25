@@ -1,4 +1,5 @@
 use crate::protocol::{DaemonCommand, DaemonResponse};
+use log::{debug, warn};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,11 +20,11 @@ pub fn get_socket_path() -> Result<PathBuf, String> {
         match fs::create_dir_all(&socket_dir) {
             Ok(_) => {
                 let socket_path = socket_dir.join("daemon.sock");
-                println!("Using socket path: {:?}", socket_path);
+                debug!("Using socket path: {:?}", socket_path);
                 return Ok(socket_path);
             }
             Err(e) => {
-                eprintln!(
+                warn!(
                     "Warning: Could not create directory in XDG_RUNTIME_DIR ({}): {}. \
                      Falling back to /tmp.",
                     socket_dir.display(),
@@ -33,14 +34,14 @@ pub fn get_socket_path() -> Result<PathBuf, String> {
             }
         }
     } else {
-        eprintln!("Warning: XDG_RUNTIME_DIR not set. Falling back to /tmp.");
+        warn!("Warning: XDG_RUNTIME_DIR not set. Falling back to /tmp.");
         // Fall through to /tmp fallback
     }
 
     // Fallback logic: use uid-specific socket in /tmp
     let uid = get_current_uid();
     let socket_path = PathBuf::from(format!("/tmp/handsfree-{}.sock", uid));
-    println!("Using fallback socket path: {:?}", socket_path);
+    debug!("Using fallback socket path: {:?}", socket_path);
     Ok(socket_path)
 }
 
@@ -48,7 +49,7 @@ pub fn get_socket_path() -> Result<PathBuf, String> {
 pub async fn connect_to_daemon(socket_path: &Path) -> Result<UnixStream, String> {
     match UnixStream::connect(socket_path).await {
         Ok(stream) => {
-            println!("Successfully connected to daemon at {:?}", socket_path);
+            debug!("Successfully connected to daemon at {:?}", socket_path);
             Ok(stream)
         }
         Err(e) => Err(format!(
@@ -114,7 +115,7 @@ pub async fn send_command(
     let command_json = serde_json::to_string(command)
         .map_err(|e| format!("Failed to serialize command: {}", e))?;
     let command_json_with_newline = format!("{}\n", command_json);
-    println!("Sending: {}", command_json_with_newline.trim()); // Trim newline for cleaner log
+    debug!("Sending: {}", command_json_with_newline.trim()); // Trim newline for cleaner log
 
     stream
         .write_all(command_json_with_newline.as_bytes())
@@ -126,6 +127,7 @@ pub async fn send_command(
         .await
         .map_err(|e| format!("Failed to flush socket: {}", e))?;
 
+    debug!("Waiting for response...");
     // Don't shutdown, we need to read the response
     receive_response(stream).await
 }
