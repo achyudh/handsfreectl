@@ -46,16 +46,13 @@ pub fn get_socket_path() -> Result<PathBuf, String> {
 }
 
 /// Connect to the daemon's Unix domain socket
-pub async fn connect_to_daemon(socket_path: &Path) -> Result<UnixStream, String> {
+pub async fn connect_to_daemon(socket_path: &Path) -> Result<UnixStream, std::io::Error> {
     match UnixStream::connect(socket_path).await {
         Ok(stream) => {
             debug!("Successfully connected to daemon at {:?}", socket_path);
             Ok(stream)
         }
-        Err(e) => Err(format!(
-            "Failed to connect to daemon socket at {:?}: {}. Is the daemon running?",
-            socket_path, e
-        )),
+        Err(e) => Err(e),
     }
 }
 
@@ -389,5 +386,18 @@ mod tests {
 
         // Should either timeout or fail to connect
         assert!(result.is_err() || result.unwrap().is_err());
+    }
+
+    #[test]
+    fn test_error_kind_for_nonexistent_socket() {
+        // This test verifies that the error kind for a nonexistent socket file is NotFound
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("nonexistent.sock");
+
+        let result = runtime.block_on(connect_to_daemon(&socket_path));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     }
 }
