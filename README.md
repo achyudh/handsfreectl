@@ -1,10 +1,6 @@
 # handsfreectl
 
-`handsfreectl` is the command-line control interface for the [Handsfree](https://github.com/achyudh/handsfree) speech-to-text daemon (`handsfreed`). It allows you to start and stop transcription, check the daemon's status, and more.
-
-## Overview
-
-This tool provides a simple way to interact with the `handsfreed` daemon from the command line, making it easy to integrate with scripts, keyboard shortcuts, or other tools in a Linux desktop environment.
+`handsfreectl` is a CLI for the [Handsfree](https://github.com/achyudh/handsfree) speech-to-text daemon (`handsfreed`). It allows you to start and stop transcription, check the daemon's status, and more. This tool provides a simple way to interact with the `handsfreed` daemon from the command line, making it easy to integrate with scripts, keyboard shortcuts, or other tools in a Linux desktop environment.
 
 ## Installation
 
