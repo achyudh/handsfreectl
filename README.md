@@ -8,7 +8,7 @@ This tool provides a simple way to interact with the `handsfreed` daemon from th
 
 ## Installation
 
-`handsfreectl` requires the `handsfreed` daemon to be installed and running. Please follow the instructions [here](https://github.com/achyudh/handsfreed/blob/main/README.md#installation) to install `handsfreed` first.
+`handsfreectl` requires the `handsfreed` daemon to be installed and running. Please follow the [instructions](https://github.com/achyudh/handsfreed/blob/main/README.md#installation) to install `handsfreed` first.
 
 There are several ways to install `handsfreectl`:
 
