@@ -8,7 +8,25 @@ This tool provides a simple way to interact with the `handsfreed` daemon from th
 
 ## Installation
 
-`handsfreectl` is written in Rust and can be built from source using Cargo.
+`handsfreectl` requires the `handsfreed` daemon to be installed and running. Please follow the instructions [here](https://github.com/achyudh/handsfreed/blob/main/README.md#installation) to install `handsfreed` first.
+
+There are several ways to install `handsfreectl`:
+
+### Pre-compiled Binaries
+
+You can download pre-compiled binaries directly from the [GitHub Releases page](https://github.com/achyudh/handsfreectl/releases). This is a good option if you don't have Cargo installed. After downloading, make sure to place the binary in a directory that is included in your system's `PATH` environment variable.
+
+### From Crates.io
+
+If you have the Cargo installed, you can install `handsfreectl` from Crates.io using `cargo`:
+
+```bash
+cargo install handsfreectl
+```
+
+### Build From Source
+
+You can build `handsfreectl` from source using Cargo.
 
 **Prerequisites:**
 * **Rust:** Version 1.85.0 or newer.
@@ -24,10 +42,7 @@ This tool provides a simple way to interact with the `handsfreed` daemon from th
     cargo build --release
     ```
 3.  **Install:**
-    Copy the compiled binary to a directory in your `$PATH`:
-    ```bash
-    sudo cp target/release/handsfreectl /usr/local/bin/
-    ```
+    Copy the compiled binary to a directory that is included in your system's `PATH` environment variable.
 
 ## Usage
 
