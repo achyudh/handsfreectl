@@ -20,6 +20,12 @@ If you have the Cargo installed, you can install `handsfreectl` from Crates.io u
 cargo install handsfreectl
 ```
 
+### Nix Flake
+
+If you use the [Nix package manager](https://nixos.org/) with flakes enabled, there is a [Handsfree flake](https://github.com/achyudh/handsfree) that provides the `handsfreectl` and `handsfreed` packages along with a Home Manager module to configure and manage the `handsfreed` daemon as a systemd service.
+
+For detailed instructions on how to add the flake to your system and configure the service, please refer to the **[Handsfree flake readme](https://github.com/achyudh/handsfreed/blob/main/README.md)**.
+
 ### Build From Source
 
 You can build `handsfreectl` from source using Cargo.
