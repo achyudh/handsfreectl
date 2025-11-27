@@ -129,6 +129,68 @@ pub async fn send_command(
     receive_response(stream).await
 }
 
+/// Serialize and send a command to the daemon without waiting for a response.
+/// Useful for commands like Subscribe where the response is a stream.
+pub async fn send_command_only(
+    stream: &mut UnixStream,
+    command: &DaemonCommand,
+) -> Result<(), String> {
+    let command_json = serde_json::to_string(command)
+        .map_err(|e| format!("Failed to serialize command: {}", e))?;
+    let command_json_with_newline = format!("{}\n", command_json);
+    debug!("Sending only: {}", command_json_with_newline.trim());
+
+    stream
+        .write_all(command_json_with_newline.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to write command to socket: {}", e))?;
+
+    stream
+        .flush()
+        .await
+        .map_err(|e| format!("Failed to flush socket: {}", e))?;
+
+    Ok(())
+}
+
+/// A stream of responses from the daemon.
+/// Wraps the UnixStream and handles reading lines and deserializing JSON.
+pub struct ResponseStream {
+    reader: BufReader<UnixStream>,
+}
+
+impl ResponseStream {
+    pub fn new(stream: UnixStream) -> Self {
+        Self {
+            reader: BufReader::new(stream),
+        }
+    }
+
+    /// Next response from the stream.
+    /// Returns None on EOF.
+    pub async fn next(&mut self) -> Option<Result<DaemonResponse, String>> {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match self.reader.read_line(&mut line).await {
+                Ok(0) => return None, // EOF
+                Ok(_) => {
+                    let trimmed = line.trim_end_matches('\n');
+                    if trimmed.trim().is_empty() {
+                        continue;
+                    }
+                    return Some(
+                        serde_json::from_str::<DaemonResponse>(trimmed).map_err(|e| {
+                            format!("Failed to deserialize: {} (Line: {})", e, trimmed)
+                        }),
+                    );
+                }
+                Err(e) => return Some(Err(format!("IO Error: {}", e))),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

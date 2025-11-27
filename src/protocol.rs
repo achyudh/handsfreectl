@@ -13,6 +13,14 @@ pub enum DaemonCommand {
     Status,
     /// Tell daemon to shut down gracefully
     Shutdown,
+    /// Toggle transcription state
+    Toggle {
+        /// Optional output mode. If None, uses default/current.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output_mode: Option<CliOutputMode>,
+    },
+    /// Subscribe to state change notifications
+    Subscribe,
 }
 
 /// Status information returned by the daemon
@@ -33,6 +41,8 @@ pub enum DaemonResponse {
     Status { status: DaemonStatus },
     /// Error response with message
     Error { message: String },
+    /// Notification broadcast when daemon state changes
+    StateChange { status: DaemonStatus },
 }
 
 #[cfg(test)]
@@ -58,6 +68,16 @@ mod tests {
         let shutdown_cmd = DaemonCommand::Shutdown;
         let json = serde_json::to_string(&shutdown_cmd).unwrap();
         assert_eq!(json, r#"{"command":"shutdown"}"#);
+
+        let toggle_cmd = DaemonCommand::Toggle {
+            output_mode: Some(CliOutputMode::Keyboard),
+        };
+        let json = serde_json::to_string(&toggle_cmd).unwrap();
+        assert_eq!(json, r#"{"command":"toggle","output_mode":"keyboard"}"#);
+
+        let subscribe_cmd = DaemonCommand::Subscribe;
+        let json = serde_json::to_string(&subscribe_cmd).unwrap();
+        assert_eq!(json, r#"{"command":"subscribe"}"#);
     }
 
     #[test]
@@ -68,7 +88,8 @@ mod tests {
         assert_eq!(resp_ack, DaemonResponse::Ack);
 
         // Test Status (with error)
-        let json_status = r#"{"response_type":"status","status":{"state":"error","last_error":"Model failed"}}"#;
+        let json_status =
+            r#"{"response_type":"status","status":{"state":"error","last_error":"Model failed"}}"#;
         let resp_status: DaemonResponse = serde_json::from_str(json_status).unwrap();
         assert_eq!(
             resp_status,
@@ -81,7 +102,8 @@ mod tests {
         );
 
         // Test Status (no error)
-        let json_status_ok = r#"{"response_type":"status","status":{"state":"idle","last_error":null}}"#;
+        let json_status_ok =
+            r#"{"response_type":"status","status":{"state":"idle","last_error":null}}"#;
         let resp_status_ok: DaemonResponse = serde_json::from_str(json_status_ok).unwrap();
         assert_eq!(
             resp_status_ok,
@@ -100,6 +122,20 @@ mod tests {
             resp_error,
             DaemonResponse::Error {
                 message: "Bad command".to_string()
+            }
+        );
+
+        // Test StateChange
+        let json_notification =
+            r#"{"response_type":"state_change","status":{"state":"listening","last_error":null}}"#;
+        let resp_notif: DaemonResponse = serde_json::from_str(json_notification).unwrap();
+        assert_eq!(
+            resp_notif,
+            DaemonResponse::StateChange {
+                status: DaemonStatus {
+                    state: "listening".to_string(),
+                    last_error: None
+                }
             }
         );
     }

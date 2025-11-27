@@ -25,8 +25,15 @@ pub enum Commands {
     },
     /// Stops the transcription
     Stop,
+    /// Toggles the transcription state (starts if idle, stops if running)
+    Toggle {
+        #[arg(long, value_enum)]
+        output: Option<CliOutputMode>,
+    },
     /// Gets the current status of the daemon
     Status,
+    /// Watch for status changes
+    Watch,
     /// Tells the daemon to shut down gracefully
     Shutdown,
 }
@@ -70,6 +77,24 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_toggle() {
+        let args = Cli::parse_from(&["handsfreectl", "toggle"]);
+        match args.command {
+            Commands::Toggle { output } => assert_eq!(output, None),
+            _ => panic!("Expected Toggle command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_toggle_with_output() {
+        let args = Cli::parse_from(&["handsfreectl", "toggle", "--output", "clipboard"]);
+        match args.command {
+            Commands::Toggle { output } => assert_eq!(output, Some(CliOutputMode::Clipboard)),
+            _ => panic!("Expected Toggle command"),
+        }
+    }
+
+    #[test]
     fn test_parse_stop() {
         let args = Cli::parse_from(&["handsfreectl", "stop"]);
         assert_eq!(args.command, Commands::Stop);
@@ -79,6 +104,12 @@ mod tests {
     fn test_parse_status() {
         let args = Cli::parse_from(&["handsfreectl", "status"]);
         assert_eq!(args.command, Commands::Status);
+    }
+
+    #[test]
+    fn test_parse_watch() {
+        let args = Cli::parse_from(&["handsfreectl", "watch"]);
+        assert_eq!(args.command, Commands::Watch);
     }
 
     #[test]

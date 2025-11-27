@@ -4,7 +4,7 @@
 [![Crates.io](https://img.shields.io/crates/v/handsfreectl.svg)](https://crates.io/crates/handsfreectl)
 [![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-`handsfreectl` is a CLI for the [Handsfree](https://github.com/achyudh/handsfree) speech-to-text daemon (`handsfreed`). It allows you to start and stop transcription, check the daemon's status, and more. This tool provides a simple way to interact with the `handsfreed` daemon from the command line, making it easy to integrate with scripts, keyboard shortcuts, or other tools in a Linux desktop environment.
+`handsfreectl` is a CLI for the [Handsfree](https://github.com/achyudh/handsfree) speech-to-text daemon (`handsfreed`). It allows you to start and stop transcription, check the daemon's status, and more. The goal of `handsfreectl` is to provide a simple way to interact with the `handsfreed` daemon from the command line, making it easy to integrate with scripts, keyboard shortcuts, or other tools in a Linux desktop environment.
 
 ## Installation
 
@@ -67,10 +67,23 @@ You can build `handsfreectl` from source using Cargo.
     handsfreectl stop
     ```
 
+*   **Toggle Transcription:**
+    Toggles the transcription state. If `Idle`, it starts listening. If `Listening`, it stops. This is ideal for binding to a single hotkey.
+    ```bash
+    handsfreectl toggle
+    handsfreectl toggle --output clipboard
+    ```
+
 *   **Check Status:**
-    Queries the daemon's current state.
+    Queries the daemon's current state once.
     ```bash
     handsfreectl status
+    ```
+
+*   **Watch Status:**
+    Streams status updates in real-time. This is efficient for status bars (like Waybar or Polybar) as it avoids polling.
+    ```bash
+    handsfreectl watch
     ```
     Possible outputs include `Idle`, `Listening`, `Processing`, `Error`, or `Inactive`.
 
