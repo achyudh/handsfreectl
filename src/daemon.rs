@@ -1,13 +1,13 @@
 use crate::protocol::{DaemonCommand, DaemonResponse};
 use anyhow::{Context, Result};
 use log::{debug, warn};
+use nix::unistd::getuid;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::timeout;
-use users::get_current_uid;
 
 const READ_TIMEOUT_SECS: u64 = 5; // Timeout for waiting for response
 
@@ -39,7 +39,7 @@ pub fn get_socket_path() -> Result<PathBuf> {
     }
 
     // Fallback logic: use uid-specific socket in /tmp
-    let uid = get_current_uid();
+    let uid = getuid();
     let socket_path = PathBuf::from(format!("/tmp/handsfree-{}.sock", uid));
     debug!("Using fallback socket path: {:?}", socket_path);
     Ok(socket_path)
@@ -181,13 +181,13 @@ impl ResponseStream {
 mod tests {
     use super::*;
     use crate::cli::CliOutputMode;
+    use nix::unistd::getuid;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
     use tempfile;
     use tokio::io::AsyncReadExt;
     use tokio::net::UnixListener;
-    use users::get_current_uid;
 
     // Helper struct for tests to manage environment variables temporarily
     struct EnvVarGuard {
@@ -262,7 +262,7 @@ mod tests {
         let _env_guard = EnvVarGuard::new("XDG_RUNTIME_DIR");
 
         // Get the expected UID for comparison
-        let uid = get_current_uid();
+        let uid = getuid();
         let expected_path = PathBuf::from(format!("/tmp/handsfree-{}.sock", uid));
 
         match get_socket_path() {
@@ -288,7 +288,7 @@ mod tests {
         }
 
         // Should fall back to /tmp/handsfree-uid.sock
-        let uid = get_current_uid();
+        let uid = getuid();
         let expected_path = PathBuf::from(format!("/tmp/handsfree-{}.sock", uid));
 
         match get_socket_path() {
