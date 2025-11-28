@@ -1,13 +1,13 @@
+use anyhow::{Context, Result, anyhow};
 use handsfreectl::cli::{Cli, Commands};
 use handsfreectl::daemon::{
     ResponseStream, connect_to_daemon, get_socket_path, send_command, send_command_only,
 };
 use handsfreectl::protocol::{DaemonCommand, DaemonResponse};
 use log::{debug, error, warn};
-use std::io::ErrorKind;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("handsfreectl=warn"),
     )
@@ -15,29 +15,30 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    let socket_path = match get_socket_path() {
-        Ok(path) => path,
-        Err(e) => {
-            error!("Error determining socket path: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let socket_path = get_socket_path().context("Error determining socket path")?;
 
     let mut stream = match connect_to_daemon(&socket_path).await {
         Ok(stream) => stream,
         Err(e) => {
             if let Commands::Status = cli.command {
-                if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::ConnectionRefused) {
-                    println!("Inactive");
-                    std::process::exit(0);
+                // Check if it's a connection error (NotFound or ConnectionRefused)
+                if let Some(io_err) = e.root_cause().downcast_ref::<std::io::Error>() {
+                    if matches!(
+                        io_err.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                    ) {
+                        println!("Inactive");
+                        return Ok(());
+                    }
                 }
             }
 
-            error!(
-                "Connection Error: Failed to connect to daemon socket at {:?}: {}. Is the daemon running?",
-                socket_path, e
-            );
-            std::process::exit(1);
+            return Err(e).with_context(|| {
+                format!(
+                    "Connection Error: Failed to connect to daemon socket at {:?}. Is the daemon running?",
+                    socket_path
+                )
+            });
         }
     };
 
@@ -54,26 +55,23 @@ async fn main() {
                         }
                     }
                     DaemonResponse::Error { message } => {
-                        error!("Daemon Error: {}", message);
-                        std::process::exit(1);
+                        return Err(anyhow!("Daemon Error: {}", message));
                     }
                     _ => {
                         warn!("Received unexpected response for Status command");
                     }
                 },
                 Err(e) => {
-                    error!("Communication Error: {}", e);
-                    std::process::exit(1);
+                    return Err(e).context("Communication Error");
                 }
             }
         }
         Commands::Watch => {
             debug!("Sending command: {:?}", DaemonCommand::Subscribe);
 
-            if let Err(e) = send_command_only(&mut stream, &DaemonCommand::Subscribe).await {
-                error!("Failed to send subscribe command: {}", e);
-                std::process::exit(1);
-            }
+            send_command_only(&mut stream, &DaemonCommand::Subscribe)
+                .await
+                .context("Failed to send subscribe command")?;
 
             let mut response_stream = ResponseStream::new(stream);
 
@@ -124,18 +122,18 @@ async fn main() {
                         println!("OK");
                     }
                     DaemonResponse::Error { message } => {
-                        error!("Daemon Error: {}", message);
-                        std::process::exit(1);
+                        return Err(anyhow!("Daemon Error: {}", message));
                     }
                     _ => {
                         warn!("Received unexpected response");
                     }
                 },
                 Err(e) => {
-                    error!("Communication Error: {}", e);
-                    std::process::exit(1);
+                    return Err(e).context("Communication Error");
                 }
             }
         }
     }
+
+    Ok(())
 }

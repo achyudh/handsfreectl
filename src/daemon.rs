@@ -1,4 +1,5 @@
 use crate::protocol::{DaemonCommand, DaemonResponse};
+use anyhow::{Context, Result};
 use log::{debug, warn};
 use std::env;
 use std::fs;
@@ -11,7 +12,7 @@ use users::get_current_uid;
 const READ_TIMEOUT_SECS: u64 = 5; // Timeout for waiting for response
 
 /// Get the path to the daemon's Unix domain socket, matching daemon defaults.
-pub fn get_socket_path() -> Result<PathBuf, String> {
+pub fn get_socket_path() -> Result<PathBuf> {
     if let Ok(runtime_dir_str) = env::var("XDG_RUNTIME_DIR") {
         let runtime_dir = PathBuf::from(runtime_dir_str);
         let socket_dir = runtime_dir.join("handsfree");
@@ -25,8 +26,7 @@ pub fn get_socket_path() -> Result<PathBuf, String> {
             }
             Err(e) => {
                 warn!(
-                    "Warning: Could not create directory in XDG_RUNTIME_DIR ({}): {}. \
-                     Falling back to /tmp.",
+                    "Warning: Could not create directory in XDG_RUNTIME_DIR ({}): {}. Falling back to /tmp.",
                     socket_dir.display(),
                     e
                 );
@@ -46,18 +46,18 @@ pub fn get_socket_path() -> Result<PathBuf, String> {
 }
 
 /// Connect to the daemon's Unix domain socket
-pub async fn connect_to_daemon(socket_path: &Path) -> Result<UnixStream, std::io::Error> {
+pub async fn connect_to_daemon(socket_path: &Path) -> Result<UnixStream> {
     match UnixStream::connect(socket_path).await {
         Ok(stream) => {
             debug!("Successfully connected to daemon at {:?}", socket_path);
             Ok(stream)
         }
-        Err(e) => Err(e),
+        Err(e) => Err(e.into()),
     }
 }
 
 /// Reads and deserializes a JSON response line from the daemon stream.
-pub async fn receive_response(stream: &mut UnixStream) -> Result<DaemonResponse, String> {
+pub async fn receive_response(stream: &mut UnixStream) -> Result<DaemonResponse> {
     let mut reader = BufReader::new(stream);
     let mut response_json = String::new();
 
@@ -71,13 +71,13 @@ pub async fn receive_response(stream: &mut UnixStream) -> Result<DaemonResponse,
         Ok(Ok(0)) | Err(_) => {
             // Ok(Ok(0)) -> EOF, Err(_) -> TimeoutError
             if response_json.is_empty() {
-                Err(format!(
+                Err(anyhow::anyhow!(
                     "Connection closed by daemon or timeout after {} seconds while waiting for response.",
                     READ_TIMEOUT_SECS
                 ))
             } else {
                 // Timeout occurred but maybe we read something? Less likely with read_line
-                Err(format!(
+                Err(anyhow::anyhow!(
                     "Timeout after {} seconds reading response line.",
                     READ_TIMEOUT_SECS
                 ))
@@ -87,19 +87,17 @@ pub async fn receive_response(stream: &mut UnixStream) -> Result<DaemonResponse,
             // Successfully read a line
             let trimmed_response = response_json.trim_end_matches('\n');
             if trimmed_response.is_empty() {
-                Err("Received empty response line from daemon.".to_string())
+                Err(anyhow::anyhow!("Received empty response line from daemon."))
             } else {
-                serde_json::from_str::<DaemonResponse>(trimmed_response).map_err(|e| {
-                    format!(
-                        "Failed to deserialize daemon response '{}': {}",
-                        trimmed_response, e
-                    )
-                })
+                serde_json::from_str::<DaemonResponse>(trimmed_response).context(format!(
+                    "Failed to deserialize daemon response '{}'",
+                    trimmed_response
+                ))
             }
         }
         Ok(Err(e)) => {
             // IO error from read_line
-            Err(format!("Failed to read response from daemon: {}", e))
+            Err(anyhow::Error::new(e).context("Failed to read response from daemon"))
         }
     }
 }
@@ -108,21 +106,17 @@ pub async fn receive_response(stream: &mut UnixStream) -> Result<DaemonResponse,
 pub async fn send_command(
     stream: &mut UnixStream,
     command: &DaemonCommand,
-) -> Result<DaemonResponse, String> {
-    let command_json = serde_json::to_string(command)
-        .map_err(|e| format!("Failed to serialize command: {}", e))?;
+) -> Result<DaemonResponse> {
+    let command_json = serde_json::to_string(command).context("Failed to serialize command")?;
     let command_json_with_newline = format!("{}\n", command_json);
     debug!("Sending: {}", command_json_with_newline.trim()); // Trim newline for cleaner log
 
     stream
         .write_all(command_json_with_newline.as_bytes())
         .await
-        .map_err(|e| format!("Failed to write command to socket: {}", e))?;
+        .context("Failed to write command to socket")?;
 
-    stream
-        .flush()
-        .await
-        .map_err(|e| format!("Failed to flush socket: {}", e))?;
+    stream.flush().await.context("Failed to flush socket")?;
 
     debug!("Waiting for response...");
     // Don't shutdown, we need to read the response
@@ -131,24 +125,17 @@ pub async fn send_command(
 
 /// Serialize and send a command to the daemon without waiting for a response.
 /// Useful for commands like Subscribe where the response is a stream.
-pub async fn send_command_only(
-    stream: &mut UnixStream,
-    command: &DaemonCommand,
-) -> Result<(), String> {
-    let command_json = serde_json::to_string(command)
-        .map_err(|e| format!("Failed to serialize command: {}", e))?;
+pub async fn send_command_only(stream: &mut UnixStream, command: &DaemonCommand) -> Result<()> {
+    let command_json = serde_json::to_string(command).context("Failed to serialize command")?;
     let command_json_with_newline = format!("{}\n", command_json);
     debug!("Sending only: {}", command_json_with_newline.trim());
 
     stream
         .write_all(command_json_with_newline.as_bytes())
         .await
-        .map_err(|e| format!("Failed to write command to socket: {}", e))?;
+        .context("Failed to write command to socket")?;
 
-    stream
-        .flush()
-        .await
-        .map_err(|e| format!("Failed to flush socket: {}", e))?;
+    stream.flush().await.context("Failed to flush socket")?;
 
     Ok(())
 }
@@ -168,7 +155,7 @@ impl ResponseStream {
 
     /// Next response from the stream.
     /// Returns None on EOF.
-    pub async fn next(&mut self) -> Option<Result<DaemonResponse, String>> {
+    pub async fn next(&mut self) -> Option<Result<DaemonResponse>> {
         let mut line = String::new();
         loop {
             line.clear();
@@ -180,12 +167,11 @@ impl ResponseStream {
                         continue;
                     }
                     return Some(
-                        serde_json::from_str::<DaemonResponse>(trimmed).map_err(|e| {
-                            format!("Failed to deserialize: {} (Line: {})", e, trimmed)
-                        }),
+                        serde_json::from_str::<DaemonResponse>(trimmed)
+                            .context(format!("Failed to deserialize: (Line: {})", trimmed)),
                     );
                 }
-                Err(e) => return Some(Err(format!("IO Error: {}", e))),
+                Err(e) => return Some(Err(anyhow::Error::new(e).context("IO Error"))),
             }
         }
     }
@@ -201,6 +187,7 @@ mod tests {
     use tempfile;
     use tokio::io::AsyncReadExt;
     use tokio::net::UnixListener;
+    use users::get_current_uid;
 
     // Helper struct for tests to manage environment variables temporarily
     struct EnvVarGuard {
@@ -380,7 +367,7 @@ mod tests {
         let result = receive_response(&mut stream).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("timeout"));
+        assert!(result.unwrap_err().to_string().contains("timeout"));
     }
 
     // Test invalid response JSON
@@ -403,7 +390,12 @@ mod tests {
         let result = receive_response(&mut stream).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Failed to deserialize"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to deserialize")
+        );
     }
 
     #[tokio::test]
@@ -459,7 +451,13 @@ mod tests {
 
         let result = runtime.block_on(connect_to_daemon(&socket_path));
         assert!(result.is_err());
+
         let err = result.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        let io_err = err
+            .root_cause()
+            .downcast_ref::<std::io::Error>()
+            .expect("Error should be (or wrap) an std::io::Error");
+
+        assert_eq!(io_err.kind(), std::io::ErrorKind::NotFound);
     }
 }
