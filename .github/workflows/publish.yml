@@ -22,4 +22,3 @@ jobs:
 
       - name: Publish to Crates.io
         run: cargo publish
-        working-directory: handsfreectl
