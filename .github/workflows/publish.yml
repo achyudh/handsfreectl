@@ -1,0 +1,25 @@
+name: Publish to Crates.io
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    name: Publish to Crates.io
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment: cargo-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Publish to Crates.io
+        run: cargo publish
+        working-directory: handsfreectl
