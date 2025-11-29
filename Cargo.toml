@@ -1,6 +1,6 @@
 [package]
 name = "handsfreectl"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Command line control interface for the Handsfree speech-to-text daemon"
 authors = ["Achyudh Ram <mail@achyudh.me>"]
